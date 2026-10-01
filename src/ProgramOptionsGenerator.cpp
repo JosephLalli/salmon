@@ -791,6 +791,13 @@ namespace salmon {
        "chain. "
        "The larger this number, the less chance that subsequent samples are "
        "auto-correlated, but the slower sampling becomes.")
+      ("gibbsPriorGroups",
+       po::value<std::string>(&(sopt.gibbsPriorGroupsFile)),
+       "A two-column, tab-separated file of transcript name and group. Each transcript's prior in the "
+       "Gibbs sampler is divided by the number of transcripts of its group that appear in at least one "
+       "equivalence class, so that a group's prior sums to that of one transcript (for example, a gene's "
+       "isoforms on one haplotype). Every transcript with mapped reads must have a group. Point estimates "
+       "and bootstraps are unchanged.")
       ("quiet,q", po::bool_switch(&(sopt.quiet))->default_value(salmon::defaults::quiet),
        "Be quiet while doing quantification (don't write informative "
        "output to the console unless something goes wrong).")

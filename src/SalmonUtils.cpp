@@ -2067,6 +2067,42 @@ bool processQuantOptions(SalmonOpts& sopt,
     jointLog->info("Using per-nucleotide prior with the default VB prior.  Setting the default prior to {}",sopt.vbPrior);
   }
 
+  if (vm.count("gibbsPriorGroups")) {
+    std::ifstream groupsIn(sopt.gibbsPriorGroupsFile);
+    if (!groupsIn) {
+      jointLog->critical("--gibbsPriorGroups: cannot open {}.", sopt.gibbsPriorGroupsFile);
+      jointLog->flush();
+      return false;
+    }
+    std::string line;
+    size_t lineNo{0};
+    while (std::getline(groupsIn, line)) {
+      ++lineNo;
+      auto tab = line.find('\t');
+      if (tab == std::string::npos or tab == 0 or tab + 1 == line.size() or
+          line.find('\t', tab + 1) != std::string::npos) {
+        jointLog->critical("--gibbsPriorGroups: {} line {} is not two tab-separated, non-empty fields.",
+                           sopt.gibbsPriorGroupsFile, lineNo);
+        jointLog->flush();
+        return false;
+      }
+      if (!sopt.gibbsPriorGroupOf.emplace(line.substr(0, tab), line.substr(tab + 1)).second) {
+        jointLog->critical("--gibbsPriorGroups: {} line {} repeats transcript {}.",
+                           sopt.gibbsPriorGroupsFile, lineNo, line.substr(0, tab));
+        jointLog->flush();
+        return false;
+      }
+    }
+    if (sopt.gibbsPriorGroupOf.empty()) {
+      jointLog->critical("--gibbsPriorGroups: {} has no lines.", sopt.gibbsPriorGroupsFile);
+      jointLog->flush();
+      return false;
+    }
+    if (sopt.numGibbsSamples == 0) {
+      jointLog->warn("--gibbsPriorGroups has no effect without --numGibbsSamples.");
+    }
+  }
+
   // If the maxHashResizeThreads was defaulted, then set it equal to the regular number 
   // of threads.
   if (vm["maxHashResizeThreads"].defaulted()) {

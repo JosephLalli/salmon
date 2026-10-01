@@ -414,6 +414,41 @@ bool CollapsedGibbsSampler::sample(
     }
   }
 
+  // --gibbsPriorGroups: divide each active transcript's prior by the number of
+  // active transcripts in its group, so that a group's prior sums to that of one
+  if (!sopt.gibbsPriorGroupOf.empty()) {
+    std::vector<const std::string*> groupOf(numTranscripts, nullptr);
+    std::unordered_map<std::string, uint32_t> activeInGroup;
+    size_t missing{0};
+    std::string firstMissing;
+    for (auto t : activeList) {
+      auto it = sopt.gibbsPriorGroupOf.find(transcripts[t].RefName);
+      if (it == sopt.gibbsPriorGroupOf.end()) {
+        if (missing == 0) {
+          firstMissing = transcripts[t].RefName;
+        }
+        ++missing;
+        continue;
+      }
+      groupOf[t] = &(it->second);
+      ++activeInGroup[it->second];
+    }
+    if (missing > 0) {
+      jointLog->critical("--gibbsPriorGroups: {} transcripts with mapped reads have no group "
+                         "(first: {}).", missing, firstMissing);
+      jointLog->flush();
+      std::exit(1);
+    }
+    uint32_t largest{1};
+    for (auto t : activeList) {
+      auto k = activeInGroup[*groupOf[t]];
+      priorAlphas[t] /= static_cast<double>(k);
+      largest = std::max(largest, k);
+    }
+    jointLog->info("Gibbs sampler prior divided by the number of active transcripts in each "
+                   "--gibbsPriorGroups group ({} groups; largest {}).", activeInGroup.size(), largest);
+  }
+
   // will hold estimated counts
   std::vector<double> alphas(numTranscripts, 0.0);
   std::vector<double> mu(numTranscripts, 0.0);

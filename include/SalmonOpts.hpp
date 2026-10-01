@@ -8,6 +8,8 @@
 
 #include <fstream>
 #include <memory> // for shared_ptr
+#include <string>
+#include <unordered_map>
 #include <ostream>
 
 #include "pufferfish/Util.hpp"
@@ -246,6 +248,10 @@ struct SalmonOpts {
   double vbPrior{1e-2};
   bool perTranscriptPrior{true};
   bool perNucleotidePrior{false};
+  // --gibbsPriorGroups: transcript name -> group; each transcript's Gibbs prior is
+  // divided by the number of active transcripts in its group
+  std::string gibbsPriorGroupsFile;
+  std::unordered_map<std::string, std::string> gibbsPriorGroupOf;
   // Related to the fragment length distribution
   size_t fragLenDistMax;
   double fragLenDistPriorMean;
