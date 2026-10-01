@@ -80,6 +80,43 @@ pub fn read_transcript_gene_map(path: &Path) -> io::Result<HashMap<String, Strin
     Ok(map)
 }
 
+/// Parse a `--gibbsPriorGroups` file: one `transcript<TAB>group` line per
+/// transcript. Stricter than [`read_transcript_gene_map`], because a line read
+/// wrongly would silently change a prior: every line must be exactly two
+/// non-empty tab-separated fields, a transcript may appear only once, and the
+/// file must not be empty.
+pub fn read_gibbs_prior_groups(path: &Path) -> io::Result<HashMap<String, String>> {
+    let bad = |msg: String| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} {msg}", path.display()),
+        )
+    };
+    let mut map = HashMap::new();
+    for (i, line) in crate::compress::open_maybe_compressed(path)?
+        .lines()
+        .enumerate()
+    {
+        let line = line?;
+        let (txp, group) = match line.split_once('\t') {
+            Some((t, g)) if !t.is_empty() && !g.is_empty() && !g.contains('\t') => (t, g),
+            _ => {
+                return Err(bad(format!(
+                    "line {} is not two tab-separated, non-empty fields",
+                    i + 1
+                )))
+            }
+        };
+        if map.insert(txp.to_string(), group.to_string()).is_some() {
+            return Err(bad(format!("line {} repeats transcript {txp}", i + 1)));
+        }
+    }
+    if map.is_empty() {
+        return Err(bad("has no lines".to_string()));
+    }
+    Ok(map)
+}
+
 /// Name the file in a read failure, and add a hint when the bytes are not
 /// readable as text. `BufRead::lines()` reports only "stream did not contain
 /// valid UTF-8", which says neither which file nor what to do about it; past

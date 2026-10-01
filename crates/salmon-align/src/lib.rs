@@ -292,6 +292,9 @@ pub struct AlignQuantOptions {
     pub num_gibbs_samples: u32,
     /// Gibbs thinning factor (`--thinningFactor`, salmon default 16)
     pub thinning_factor: u32,
+    /// transcript name -> group (`--gibbsPriorGroups`); each active transcript's
+    /// Gibbs prior is divided by the number of active transcripts in its group
+    pub gibbs_prior_groups: Option<HashMap<String, String>>,
     /// Optional shared progress counters. When `Some`, the BAM pass reports
     /// processed/mapped fragment counts here as it runs so the caller can drive
     /// a live progress display. `None` (the default) disables sharing.
@@ -349,8 +352,30 @@ impl AlignQuantOptions {
             num_bootstraps: 0,
             num_gibbs_samples: 0,
             thinning_factor: 16,
+            gibbs_prior_groups: None,
             progress: None,
         }
+    }
+
+    /// `--gibbsPriorGroups` resolved against this run's equivalence classes,
+    /// for the Gibbs sampler; `None` when the option was not given.
+    pub(crate) fn gibbs_prior_groups(
+        &self,
+        packed: &salmon_infer::PackedEqClasses,
+        names: &[String],
+    ) -> Result<Option<salmon_infer::PriorGroups>> {
+        let Some(groups) = &self.gibbs_prior_groups else {
+            return Ok(None);
+        };
+        let g = salmon_infer::PriorGroups::new(packed, names, groups)
+            .map_err(|e| anyhow::anyhow!("--gibbsPriorGroups: {e}"))?;
+        tracing::info!(
+            "Gibbs sampler prior divided by the number of active transcripts in each \
+             --gibbsPriorGroups group ({} groups; largest {})",
+            g.num_groups,
+            g.largest
+        );
+        Ok(Some(g))
     }
 }
 
@@ -2610,6 +2635,7 @@ pub fn quantify_alignments(opts: &AlignQuantOptions) -> Result<AlignQuantResult>
             // per-transcript prior made the flag a no-op for Gibbs on every
             // path (#1140, audit D13).
             per_transcript_prior: !opts.em.per_nucleotide_prior,
+            prior_groups: opts.gibbs_prior_groups(&packed, &names)?,
         };
         salmon_infer::gibbs_sample(&packed, &eff_lengths, &counts, &gopts, 0x6217_0000)
     } else {

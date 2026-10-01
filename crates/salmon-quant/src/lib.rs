@@ -154,6 +154,9 @@ pub struct QuantOptions {
     pub num_gibbs_samples: u32,
     /// Gibbs thinning factor (`--thinningFactor`, salmon default 16)
     pub thinning_factor: u32,
+    /// transcript name -> group (`--gibbsPriorGroups`); each active transcript's
+    /// Gibbs prior is divided by the number of active transcripts in its group
+    pub gibbs_prior_groups: Option<std::collections::HashMap<String, String>>,
     /// disable effective-length correction; use the raw reference length
     /// (`--noLengthCorrection`)
     pub no_length_correction: bool,
@@ -253,6 +256,7 @@ impl QuantOptions {
             num_bootstraps: 0,
             num_gibbs_samples: 0,
             thinning_factor: 16,
+            gibbs_prior_groups: None,
             no_length_correction: false,
             model_single_frag_prob: true,
             no_frag_length_dist: false,
@@ -1346,6 +1350,22 @@ pub fn quantify(opts: &QuantOptions) -> Result<QuantResult> {
             } else {
                 1e-3
             };
+            // `--gibbsPriorGroups`, resolved against this run's equivalence classes.
+            let prior_groups = match &opts.gibbs_prior_groups {
+                Some(groups) => {
+                    let names: Vec<&str> = (0..num_refs).map(|t| salmon.ref_name(t)).collect();
+                    let g = salmon_infer::PriorGroups::new(&packed, &names, groups)
+                        .map_err(|e| anyhow::anyhow!("--gibbsPriorGroups: {e}"))?;
+                    tracing::info!(
+                        "Gibbs sampler prior divided by the number of active transcripts in \
+                         each --gibbsPriorGroups group ({} groups; largest {})",
+                        g.num_groups,
+                        g.largest
+                    );
+                    Some(g)
+                }
+                None => None,
+            };
             let gopts = salmon_infer::GibbsOptions {
                 num_samples: samples,
                 thinning: opts.thinning_factor,
@@ -1354,6 +1374,7 @@ pub fn quantify(opts: &QuantOptions) -> Result<QuantResult> {
                 // per-transcript prior made the flag a no-op for Gibbs on every
                 // path (#1140, audit D13).
                 per_transcript_prior: !opts.em.per_nucleotide_prior,
+                prior_groups,
             };
             salmon_infer::gibbs_sample(&packed, &eff_lengths, &counts, &gopts, 0x6217_0000)
         }
