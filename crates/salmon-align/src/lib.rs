@@ -292,6 +292,13 @@ pub struct AlignQuantOptions {
     pub num_gibbs_samples: u32,
     /// Gibbs thinning factor (`--thinningFactor`, salmon default 16)
     pub thinning_factor: u32,
+    /// `--gibbsPriorAggregation`: each active transcript's Gibbs prior is
+    /// divided by the number of active transcripts of its `gene_map` gene
+    pub gibbs_prior_aggregation: bool,
+    /// `--geneMap`'s transcript -> gene map, for `gibbs_prior_aggregation`
+    pub gene_map: Option<HashMap<String, String>>,
+    /// `--ignoreTxVersion`, for `gibbs_prior_aggregation`
+    pub ignore_tx_version: bool,
     /// Optional shared progress counters. When `Some`, the BAM pass reports
     /// processed/mapped fragment counts here as it runs so the caller can drive
     /// a live progress display. `None` (the default) disables sharing.
@@ -349,8 +356,41 @@ impl AlignQuantOptions {
             num_bootstraps: 0,
             num_gibbs_samples: 0,
             thinning_factor: 16,
+            gibbs_prior_aggregation: false,
+            gene_map: None,
+            ignore_tx_version: false,
             progress: None,
         }
+    }
+
+    /// `--gibbsPriorAggregation` resolved against this run's equivalence
+    /// classes, for the Gibbs sampler; `None` when the switch is off.
+    pub(crate) fn gibbs_prior_aggregation(
+        &self,
+        packed: &salmon_infer::PackedEqClasses,
+        names: &[String],
+    ) -> Result<Option<salmon_infer::PriorGroups>> {
+        if !self.gibbs_prior_aggregation {
+            return Ok(None);
+        }
+        let Some(gene_map) = &self.gene_map else {
+            anyhow::bail!("--gibbsPriorAggregation requires --geneMap");
+        };
+        // A transcript the gene map does not list is its own gene, as in quant.genes.sf.
+        let genes = salmon_core::genemap::gene_of_each(names, gene_map, self.ignore_tx_version);
+        let group_of: Vec<&str> = genes
+            .iter()
+            .zip(names)
+            .map(|(g, n)| g.unwrap_or(n))
+            .collect();
+        let g = salmon_infer::PriorGroups::new(packed, &group_of);
+        tracing::info!(
+            "Gibbs sampler prior divided by the number of active transcripts in each \
+             --geneMap gene ({} genes; largest {})",
+            g.num_groups,
+            g.largest
+        );
+        Ok(Some(g))
     }
 }
 
@@ -2610,6 +2650,7 @@ pub fn quantify_alignments(opts: &AlignQuantOptions) -> Result<AlignQuantResult>
             // per-transcript prior made the flag a no-op for Gibbs on every
             // path (#1140, audit D13).
             per_transcript_prior: !opts.em.per_nucleotide_prior,
+            prior_groups: opts.gibbs_prior_aggregation(&packed, &names)?,
         };
         salmon_infer::gibbs_sample(&packed, &eff_lengths, &counts, &gopts, 0x6217_0000)
     } else {

@@ -650,6 +650,9 @@ struct QuantArgs {
     /// `--bamCompressThreads` without `--writeBam` already hard-errors.
     #[arg(long = "thinningFactor")]
     thinning_factor: Option<u32>,
+    /// Give each `--geneMap` gene the Gibbs prior of a single transcript.
+    #[arg(long = "gibbsPriorAggregation", requires = "gene_map")]
+    gibbs_prior_aggregation: bool,
     /// (Long reads) Oxford Nanopore model — not supported; use oarfish instead.
     #[arg(long = "ont")]
     ont: bool,
@@ -1212,6 +1215,9 @@ fn requant_options(
     q.num_bootstraps = map_opts.num_bootstraps;
     q.num_gibbs_samples = map_opts.num_gibbs_samples;
     q.thinning_factor = map_opts.thinning_factor;
+    q.gibbs_prior_aggregation = map_opts.gibbs_prior_aggregation;
+    q.gene_map = map_opts.gene_map.clone();
+    q.ignore_tx_version = map_opts.ignore_tx_version;
     // The three below were missing until #1140's audit. They are not
     // online-only knobs: the RAD quantifier honours all three, so dropping them
     // meant the flag was accepted and then ignored.
@@ -2220,6 +2226,14 @@ fn run_quant(args: QuantArgs, quiet: bool) -> Result<()> {
     }
     let out_dir = args.output.clone();
     let gene_map = load_gene_map(args.gene_map.clone(), args.ignore_tx_version)?;
+    if args.gibbs_prior_aggregation && args.num_gibbs_samples == 0 {
+        warn_inert_in_mode(
+            "a run without Gibbs sampling",
+            Some(("divides", "divide")),
+            "the Gibbs sampler's prior, which needs --numGibbsSamples",
+            &[("--gibbsPriorAggregation", true)],
+        );
+    }
 
     // 2.6.0 flips the default to the deterministic two-phase flow; `--online`
     // selects the pre-2.6 one-pass path for one deprecation cycle. The knobs
@@ -2386,6 +2400,9 @@ fn run_quant(args: QuantArgs, quiet: bool) -> Result<()> {
         opts.num_bootstraps = args.num_bootstraps;
         opts.num_gibbs_samples = args.num_gibbs_samples;
         opts.thinning_factor = args.thinning_factor.unwrap_or(16);
+        opts.gibbs_prior_aggregation = args.gibbs_prior_aggregation;
+        opts.gene_map = gene_map.as_ref().map(|g| g.map.clone());
+        opts.ignore_tx_version = args.ignore_tx_version;
         // --scoreExp scales the best-minus-score soft weight, and the RAD
         // quantifier applies it to AS-scored placements exactly as it does to
         // selective-alignment ones — so the deterministic `-a` path honours it.
@@ -2664,6 +2681,9 @@ fn run_quant(args: QuantArgs, quiet: bool) -> Result<()> {
         opts.num_bootstraps = args.num_bootstraps;
         opts.num_gibbs_samples = args.num_gibbs_samples;
         opts.thinning_factor = args.thinning_factor.unwrap_or(16);
+        opts.gibbs_prior_aggregation = args.gibbs_prior_aggregation;
+        opts.gene_map = gene_map.as_ref().map(|g| g.map.clone());
+        opts.ignore_tx_version = args.ignore_tx_version;
         let res = quantify_rad(&opts, &rad_path).context("RAD-input quantification failed")?;
         let pct = if res.num_processed > 0 {
             100.0 * res.num_mapped as f64 / res.num_processed as f64
@@ -2894,6 +2914,9 @@ fn run_quant(args: QuantArgs, quiet: bool) -> Result<()> {
     opts.num_bootstraps = args.num_bootstraps;
     opts.num_gibbs_samples = args.num_gibbs_samples;
     opts.thinning_factor = args.thinning_factor.unwrap_or(16);
+    opts.gibbs_prior_aggregation = args.gibbs_prior_aggregation;
+    opts.gene_map = gene_map.as_ref().map(|g| g.map.clone());
+    opts.ignore_tx_version = args.ignore_tx_version;
     opts.no_length_correction = args.no_length_correction;
     opts.model_single_frag_prob = !args.no_single_frag_prob;
     opts.no_frag_length_dist = args.no_frag_length_dist;
@@ -3489,6 +3512,9 @@ mod tests {
         map_opts.num_bootstraps = 11;
         map_opts.num_gibbs_samples = 23;
         map_opts.thinning_factor = 9;
+        map_opts.gibbs_prior_aggregation = true;
+        map_opts.gene_map = Some([("t0".to_string(), "g0".to_string())].into());
+        map_opts.ignore_tx_version = true;
         map_opts.bias_speed_samp = 25;
         map_opts.no_bias_length_threshold = true;
         map_opts.init_uniform = true;
@@ -3526,6 +3552,9 @@ mod tests {
         assert_eq!(q.num_bootstraps, 11);
         assert_eq!(q.num_gibbs_samples, 23);
         assert_eq!(q.thinning_factor, 9);
+        assert!(q.gibbs_prior_aggregation);
+        assert_eq!(q.gene_map, map_opts.gene_map);
+        assert!(q.ignore_tx_version);
         assert_eq!(q.bias_speed_samp, 25);
         assert!(q.no_bias_length_threshold);
         assert!(q.init_uniform);

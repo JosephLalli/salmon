@@ -2362,6 +2362,7 @@ pub fn quantify_rad(opts: &AlignQuantOptions, rad_path: &Path) -> Result<AlignQu
             // per-transcript prior made the flag a no-op for Gibbs on every
             // path (#1140, audit D13).
             per_transcript_prior: !opts.em.per_nucleotide_prior,
+            prior_groups: opts.gibbs_prior_aggregation(&packed, &names)?,
         };
         salmon_infer::gibbs_sample(&packed, &eff_lengths, &counts, &gopts, 0x6217_0000)
     } else {

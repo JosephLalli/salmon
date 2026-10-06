@@ -243,6 +243,31 @@ pub fn matches_ignoring_tx_version(names: &[String], gene_map: &HashMap<String, 
         .count()
 }
 
+/// Each of `names`' gene in `gene_map`, or `None` where it has no entry: the
+/// join [`write_gene_quant`] aggregates by, so `--gibbsPriorAggregation` groups
+/// transcripts exactly as `quant.genes.sf` does. With `ignore_tx_version`,
+/// identifiers are compared with a trailing `.<digits>` removed on both sides.
+pub fn gene_of_each<'a, S: AsRef<str>>(
+    names: &[S],
+    gene_map: &'a HashMap<String, String>,
+    ignore_tx_version: bool,
+) -> Vec<Option<&'a str>> {
+    // Re-key the map once when versions are ignored, rather than per lookup.
+    let stripped: Option<HashMap<&str, &str>> = ignore_tx_version.then(|| {
+        gene_map
+            .iter()
+            .map(|(t, g)| (strip_tx_version(t), g.as_str()))
+            .collect()
+    });
+    names
+        .iter()
+        .map(|name| match &stripped {
+            Some(m) => m.get(strip_tx_version(name.as_ref())).copied(),
+            None => gene_map.get(name.as_ref()).map(String::as_str),
+        })
+        .collect()
+}
+
 /// Aggregate transcript-level estimates to gene level and write `quant.genes.sf`.
 ///
 /// A transcript with no entry in `gene_map` is emitted as its own
@@ -286,14 +311,6 @@ pub fn write_gene_quant(
     ignore_tx_version: bool,
     unmatched_out: Option<&Path>,
 ) -> io::Result<GeneQuantSummary> {
-    // Re-key the map once when versions are ignored, rather than per lookup.
-    let stripped: Option<HashMap<&str, &str>> = ignore_tx_version.then(|| {
-        gene_map
-            .iter()
-            .map(|(t, g)| (strip_tx_version(t), g.as_str()))
-            .collect()
-    });
-
     // Group transcript indices by gene (gene name order is sorted for determinism).
     //
     // A `BTreeMap` iterates in sorted key order, unlike a `HashMap`; that is the
@@ -302,11 +319,8 @@ pub fn write_gene_quant(
     let mut genes: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     let mut summary = GeneQuantSummary::default();
     let mut unmatched: Vec<&str> = Vec::new();
-    for (i, name) in names.iter().enumerate() {
-        let gene = match &stripped {
-            Some(m) => m.get(strip_tx_version(name)).copied(),
-            None => gene_map.get(name).map(String::as_str),
-        };
+    let gene_of = gene_of_each(names, gene_map, ignore_tx_version);
+    for (i, (name, gene)) in names.iter().zip(gene_of).enumerate() {
         match gene {
             Some(g) => {
                 genes.entry(g).or_default().push(i);
