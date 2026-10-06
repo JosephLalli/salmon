@@ -154,9 +154,13 @@ pub struct QuantOptions {
     pub num_gibbs_samples: u32,
     /// Gibbs thinning factor (`--thinningFactor`, salmon default 16)
     pub thinning_factor: u32,
-    /// transcript name -> group (`--gibbsPriorGroups`); each active transcript's
-    /// Gibbs prior is divided by the number of active transcripts in its group
-    pub gibbs_prior_groups: Option<std::collections::HashMap<String, String>>,
+    /// `--gibbsPriorAggregation`: each active transcript's Gibbs prior is
+    /// divided by the number of active transcripts of its `gene_map` gene
+    pub gibbs_prior_aggregation: bool,
+    /// `--geneMap`'s transcript -> gene map, for `gibbs_prior_aggregation`
+    pub gene_map: Option<std::collections::HashMap<String, String>>,
+    /// `--ignoreTxVersion`, for `gibbs_prior_aggregation`
+    pub ignore_tx_version: bool,
     /// disable effective-length correction; use the raw reference length
     /// (`--noLengthCorrection`)
     pub no_length_correction: bool,
@@ -256,7 +260,9 @@ impl QuantOptions {
             num_bootstraps: 0,
             num_gibbs_samples: 0,
             thinning_factor: 16,
-            gibbs_prior_groups: None,
+            gibbs_prior_aggregation: false,
+            gene_map: None,
+            ignore_tx_version: false,
             no_length_correction: false,
             model_single_frag_prob: true,
             no_frag_length_dist: false,
@@ -1350,21 +1356,30 @@ pub fn quantify(opts: &QuantOptions) -> Result<QuantResult> {
             } else {
                 1e-3
             };
-            // `--gibbsPriorGroups`, resolved against this run's equivalence classes.
-            let prior_groups = match &opts.gibbs_prior_groups {
-                Some(groups) => {
-                    let names: Vec<&str> = (0..num_refs).map(|t| salmon.ref_name(t)).collect();
-                    let g = salmon_infer::PriorGroups::new(&packed, &names, groups)
-                        .map_err(|e| anyhow::anyhow!("--gibbsPriorGroups: {e}"))?;
-                    tracing::info!(
-                        "Gibbs sampler prior divided by the number of active transcripts in \
-                         each --gibbsPriorGroups group ({} groups; largest {})",
-                        g.num_groups,
-                        g.largest
-                    );
-                    Some(g)
-                }
-                None => None,
+            // `--gibbsPriorAggregation`, resolved against this run's equivalence classes.
+            let prior_groups = if opts.gibbs_prior_aggregation {
+                let Some(gene_map) = &opts.gene_map else {
+                    anyhow::bail!("--gibbsPriorAggregation requires --geneMap");
+                };
+                let names: Vec<&str> = (0..num_refs).map(|t| salmon.ref_name(t)).collect();
+                // A transcript the gene map does not list is its own gene, as in quant.genes.sf.
+                let genes =
+                    salmon_core::genemap::gene_of_each(&names, gene_map, opts.ignore_tx_version);
+                let group_of: Vec<&str> = genes
+                    .iter()
+                    .zip(&names)
+                    .map(|(g, n)| g.unwrap_or(n))
+                    .collect();
+                let g = salmon_infer::PriorGroups::new(&packed, &group_of);
+                tracing::info!(
+                    "Gibbs sampler prior divided by the number of active transcripts in \
+                     each --geneMap gene ({} genes; largest {})",
+                    g.num_groups,
+                    g.largest
+                );
+                Some(g)
+            } else {
+                None
             };
             let gopts = salmon_infer::GibbsOptions {
                 num_samples: samples,

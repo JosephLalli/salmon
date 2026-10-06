@@ -155,7 +155,7 @@ See the [RAD I/O & deterministic quantification](../../guides/rad-and-determinis
 | `--numBootstraps <N>` | Bootstrap replicates for posterior uncertainty. |
 | `--numGibbsSamples <N>` | Gibbs posterior samples (mutually exclusive with bootstraps). |
 | `--thinningFactor <N>` | Gibbs thinning factor. Default `16`. |
-| `--gibbsPriorGroups <FILE>` | Two-column, tab-separated file of transcript name and group. Each transcript's Gibbs prior is divided by the number of transcripts of its group that appear in at least one equivalence class, so a group's prior sums to that of one transcript. Every transcript with mapped reads must have a group. Point estimates and bootstraps are unchanged. |
+| `--gibbsPriorAggregation` | Give each `--geneMap` gene the Gibbs prior of a single transcript. |
 | `--incompatPrior <f>` | Prior weight for strand-incompatible mappings. Default `0`. |
 
 ### Diagnostics

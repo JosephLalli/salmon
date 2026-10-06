@@ -168,7 +168,7 @@ pub struct GibbsOptions {
     pub prior: f64,
     /// whether the prior is per-transcript (else scaled by effective length)
     pub per_transcript_prior: bool,
-    /// `--gibbsPriorGroups`: when set, each active transcript's prior is
+    /// `--gibbsPriorAggregation`: when set, each active transcript's prior is
     /// divided by the number of active transcripts in its group
     pub prior_groups: Option<PriorGroups>,
 }
@@ -185,9 +185,9 @@ impl Default for GibbsOptions {
     }
 }
 
-/// `--gibbsPriorGroups` resolved against one run: how many active transcripts
-/// (those in at least one equivalence class, the ones [`gibbs_sample`] draws)
-/// share each transcript's group.
+/// `--gibbsPriorAggregation` resolved against one run: how many active
+/// transcripts (those in at least one equivalence class, the ones
+/// [`gibbs_sample`] draws) share each transcript's group, its `--geneMap` gene.
 ///
 /// With a per-transcript prior `a`, the prior on the split between two groups
 /// of `k` and `m` transcripts (a gene's isoforms on each of two haplotypes,
@@ -205,46 +205,30 @@ pub struct PriorGroups {
 }
 
 impl PriorGroups {
-    /// Count the active transcripts in each group. `names` are the transcript
-    /// names, indexed like `p`'s transcripts; `groups` maps a name to its group.
-    /// An active transcript with no group is an error, reported with the count
-    /// and the first such name; inactive transcripts (decoys among them) need none.
-    pub fn new<S: AsRef<str>>(
-        p: &PackedEqClasses,
-        names: &[S],
-        groups: &HashMap<String, String>,
-    ) -> Result<Self, String> {
+    /// Count the active transcripts in each group. `group_of` names each
+    /// transcript's group, indexed like `p`'s transcripts.
+    pub fn new<S: AsRef<str>>(p: &PackedEqClasses, group_of: &[S]) -> Self {
         let mut active = vec![false; p.num_txps];
         for &t in &p.labels {
             active[t as usize] = true;
         }
-        let mut group_of: Vec<Option<&str>> = vec![None; p.num_txps];
         let mut size: HashMap<&str, u32> = HashMap::new();
-        let mut ungrouped = 0usize;
-        let mut first_ungrouped: Option<usize> = None;
         for t in (0..p.num_txps).filter(|&t| active[t]) {
-            match groups.get(names[t].as_ref()) {
-                Some(g) => {
-                    group_of[t] = Some(g.as_str());
-                    *size.entry(g.as_str()).or_insert(0) += 1;
-                }
-                None => {
-                    ungrouped += 1;
-                    first_ungrouped.get_or_insert(t);
-                }
-            }
+            *size.entry(group_of[t].as_ref()).or_insert(0) += 1;
         }
-        if let Some(t) = first_ungrouped {
-            return Err(format!(
-                "{ungrouped} transcripts with mapped reads have no group (first: {})",
-                names[t].as_ref()
-            ));
-        }
-        Ok(Self {
-            group_size: group_of.iter().map(|g| g.map_or(0, |g| size[g])).collect(),
+        Self {
+            group_size: (0..p.num_txps)
+                .map(|t| {
+                    if active[t] {
+                        size[group_of[t].as_ref()]
+                    } else {
+                        0
+                    }
+                })
+                .collect(),
             num_groups: size.len(),
             largest: size.values().copied().max().unwrap_or(0),
-        })
+        }
     }
 
     /// Divide each active transcript's prior by the size of its group; inactive
@@ -596,32 +580,17 @@ mod tests {
         }
     }
 
-    /// `--gibbsPriorGroups`: t0, t1 and t2 share group A but t2 is in no class,
-    /// so A's divisor is 2, not 3, and t2's prior is left alone; t4 (a decoy,
-    /// say) is inactive and needs no group. An active transcript without one is
-    /// an error naming the first.
+    /// `--gibbsPriorAggregation`: t0, t1 and t2 share gene A but t2 is in no
+    /// class, so A's divisor is 2, not 3, and t2's prior is left alone; t4 is
+    /// inactive.
     #[test]
     fn prior_groups_divide_by_active_group_size() {
         let p = packed(&[(vec![0, 1], 10), (vec![1], 5), (vec![3], 7)], 5);
-        let names = ["t0", "t1", "t2", "t3", "t4"];
-        let mut groups: HashMap<String, String> = [("t0", "A"), ("t1", "A"), ("t2", "A")]
-            .iter()
-            .map(|&(t, g)| (t.to_string(), g.to_string()))
-            .collect();
-        groups.insert("t3".to_string(), "B".to_string());
-
-        let g = PriorGroups::new(&p, &names, &groups).unwrap();
+        let g = PriorGroups::new(&p, &["A", "A", "A", "B", "C"]);
         assert_eq!((g.num_groups, g.largest), (2, 2));
         let mut prior = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         g.divide(&mut prior);
         assert_eq!(prior, vec![0.5, 1.0, 3.0, 4.0, 5.0]);
-
-        groups.remove("t0");
-        groups.remove("t3");
-        assert_eq!(
-            PriorGroups::new(&p, &names, &groups).unwrap_err(),
-            "2 transcripts with mapped reads have no group (first: t0)"
-        );
     }
 
     /// Unique counts are per transcript; ambiguous counts credit the full class
